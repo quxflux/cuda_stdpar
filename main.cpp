@@ -1,12 +1,16 @@
 #include <algorithm>
 #include <chrono>
 #include <execution>
+#include <functional>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <numbers>
 #include <random>
 #include <ranges>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "point3d.h"
@@ -55,6 +59,16 @@ namespace
     return points;
   }
 
+  template<typename F, typename... Ts>
+  void for_each(const std::tuple<Ts...>& tuple, F&& f)
+  {
+    [&]<std::size_t... Indices>(const std::index_sequence<Indices...>&)
+    {
+      (std::invoke(f, std::get<Indices>(tuple)), ...);
+    }
+    (std::make_index_sequence<sizeof...(Ts)>());
+  }
+
   template<typename Layout>
   auto generate_data(const std::size_t n) = delete;
 
@@ -87,27 +101,26 @@ namespace
   }
 
   template<typename Layout>
-  void benchmark(const Layout&)
+  void benchmark(const std::size_t n, const Layout&)
   {
-    constexpr std::size_t n = 10'000'000;
     const auto data = generate_data<Layout>(n);
     const float n_recip = 1.f / n;
 
     using clock = std::chrono::high_resolution_clock;
+    using duration = std::chrono::duration<float, std::milli>;
 
-    for (std::size_t i = 0; i < 10; ++i)
-    {
+    std::array<duration, 100u> execution_times;
+
+    std::ranges::generate(execution_times, [&] {
       const auto start = clock::now();
 
-      constexpr auto calculation = [](const qf::point3d& cartesian) {
+      const auto calculation = [=](const qf::point3d& cartesian) {
         auto [r, theta, phi] = qf::to_spherical(qf::normalize(cartesian));
 
-        constexpr float pi = 3.1415926535f;
+        theta += std::numbers::pi_v<float> / 8.f;
+        phi += std::numbers::pi_v<float> / 4.f;
 
-        theta += pi / 8.f;
-        phi += pi / 4.f;
-
-        return qf::to_cartesian({r, theta, phi});
+        return qf::to_cartesian({r, theta, phi}) * n_recip;
       };
 
       qf::point3d reduced;
@@ -135,23 +148,34 @@ namespace
                                         [=](const auto& coord) { return calculation(coord); });
       }
 
-      reduced.x = reduced.x * n_recip;
-      reduced.y = reduced.y * n_recip;
-      reduced.z = reduced.z * n_recip;
+      const auto exec_time = std::chrono::duration_cast<duration>(clock::now() - start);
 
-      const auto duration = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(clock::now() - start);
+      // print to cout to prevent compiler from outsmarting us
+      std::cout << std::fixed << std::setprecision(5) << exec_time.count() << " ms [" << reduced.x << ", " << reduced.y
+                << ", " << reduced.z << "]\r";
 
-      const float mega_items_per_second = static_cast<float>(n) / 1'000'000 / (duration.count() / 1000);
-      std::cout << layout::name<Layout>() << ": " << reduced.x << ", " << reduced.y << ", " << reduced.z << ", took "
-                << duration.count() << " ms, " << mega_items_per_second << " MItems/s" << std::endl;
-    }
+      return exec_time;
+    });
+
+    std::ranges::nth_element(execution_times, std::begin(execution_times) + execution_times.size() / 2);
+    const auto median_duration = execution_times[execution_times.size() / 2];
+
+    const float mega_items_per_second =
+      (static_cast<float>(n) / std::mega::num) /
+      (std::chrono::duration_cast<std::chrono::duration<float>>(median_duration).count());
+    std::cout << n << ", " << layout::name<Layout>() << ", " << median_duration.count() << " ms, "
+              << mega_items_per_second << " MItems/s" << std::endl;
   }
 }  // namespace
 
 int main(int, char**)
 {
-  benchmark(layout::soa);
-  benchmark(layout::aos);
+  for_each(std::tuple{layout::aos, layout::soa}, [](const auto layout) {
+    for (const auto n : std::views::iota(1u, 8u) | std::views::transform([](const auto exp) {
+                          return static_cast<std::size_t>(std::pow(10u, exp));
+                        }))
+      benchmark(n, layout);
+  });
 
   return 0;
 }

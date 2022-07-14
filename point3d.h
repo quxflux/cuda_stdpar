@@ -16,6 +16,11 @@ namespace quxflux
     return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
   }
 
+  [[nodiscard]] constexpr point3d operator*(const point3d& lhs, const float rhs) noexcept
+  {
+    return {lhs.x * rhs, lhs.y * rhs, lhs.z * rhs};
+  }
+
   [[nodiscard]] point3d to_spherical(const point3d& cartesian) noexcept
   {
     const auto [x, y, z] = cartesian;
@@ -40,4 +45,4 @@ namespace quxflux
 
     return {x * m_recip, y * m_recip, z * m_recip};
   }
-}
+}  // namespace quxflux
